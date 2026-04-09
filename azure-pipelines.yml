@@ -34,7 +34,7 @@ steps:
     publishWebProjects: false
     projects: 'MvcMovie/MvcMovie.csproj'
     arguments: '--configuration $(buildConfiguration) --no-build --output $(Build.ArtifactStagingDirectory)'
-    zipAfterPublish: false
+    zipAfterPublish: true
 
 - task: PublishBuildArtifacts@1
   displayName: 'Publish Build Artifact'
