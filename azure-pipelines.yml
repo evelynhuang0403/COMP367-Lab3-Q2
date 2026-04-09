@@ -1,46 +1,154 @@
 trigger:
 - master
 
-pool:
-  name: 'Test Agent'
-
 variables:
   buildConfiguration: 'Release'
+  artifactName: 'drop'
+  webProject: 'MvcMovie/MvcMovie.csproj'
+  packagePath: '$(Build.ArtifactStagingDirectory)'
+  siteName: 'Default Web Site'
+  appPhysicalPath: 'C:\inetpub\wwwroot\MvcMovie'
 
-steps:
-- task: UseDotNet@2
-  displayName: 'Use .NET 8 SDK'
-  inputs:
-    packageType: 'sdk'
-    version: '8.0.x'
+stages:
 
-- task: DotNetCoreCLI@2
-  displayName: 'Restore'
-  inputs:
-    command: 'restore'
-    projects: 'MvcMovie/MvcMovie.csproj'
+# =========================
+# CI STAGE
+# =========================
+- stage: CI
+  displayName: 'Build and Package'
+  jobs:
+  - job: Build
+    displayName: 'Build MVC Web App'
+    pool:
+      name: 'Test Agent'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Use .NET 8 SDK'
+      inputs:
+        packageType: 'sdk'
+        version: '8.0.x'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Build'
-  inputs:
-    command: 'build'
-    projects: 'MvcMovie/MvcMovie.csproj'
-    arguments: '--configuration $(buildConfiguration) --no-restore'
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore'
+      inputs:
+        command: 'restore'
+        projects: '$(webProject)'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Publish Web App'
-  inputs:
-    command: 'publish'
-    publishWebProjects: false
-    projects: 'MvcMovie/MvcMovie.csproj'
-    arguments: '--configuration $(buildConfiguration) --no-build --output $(Build.ArtifactStagingDirectory)'
-    zipAfterPublish: false
+    - task: DotNetCoreCLI@2
+      displayName: 'Build'
+      inputs:
+        command: 'build'
+        projects: '$(webProject)'
+        arguments: '--configuration $(buildConfiguration) --no-restore'
 
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Build Artifact'
-  inputs:
-    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-    ArtifactName: 'drop'
-    publishLocation: 'Container'
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish Web App'
+      inputs:
+        command: 'publish'
+        publishWebProjects: false
+        projects: '$(webProject)'
+        arguments: '--configuration $(buildConfiguration) --no-build --output $(packagePath)'
+        zipAfterPublish: true
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Build Artifact'
+      inputs:
+        PathtoPublish: '$(packagePath)'
+        ArtifactName: '$(artifactName)'
+        publishLocation: 'Container'
+
+# =========================
+# CD STAGE
+# =========================
+- stage: CD
+  displayName: 'Deploy to Local IIS'
+  dependsOn: CI
+  condition: succeeded()
+  jobs:
+  - deployment: DeployToLocalMachine
+    displayName: 'Deploy MVC App'
+    pool:
+      name: 'Test Agent'
+    environment: 'local-iis'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: $(artifactName)
+
+          - powershell: |
+              Write-Host "Checking IIS site and deployment folder..."
+
+              Import-Module WebAdministration
+
+              $siteName = "$(siteName)"
+              $physicalPath = "$(appPhysicalPath)"
+
+              if (-not (Test-Path $physicalPath)) {
+                  New-Item -Path $physicalPath -ItemType Directory -Force
+              }
+
+              if (-not (Get-Website -Name $siteName -ErrorAction SilentlyContinue)) {
+                  New-Website -Name $siteName -Port 80 -PhysicalPath $physicalPath -Force
+                  Write-Host "Created IIS site: $siteName"
+              }
+              else {
+                  Write-Host "IIS site already exists: $siteName"
+              }
+            displayName: 'Pre-check IIS Site and Folder'
+
+          - powershell: |
+              $zipFile = Get-ChildItem "$(Pipeline.Workspace)\$(artifactName)" -Recurse -Filter *.zip | Select-Object -First 1
+
+              if (-not $zipFile) {
+                  throw "No zip package found in downloaded artifact."
+              }
+
+              Write-Host "Found package: $($zipFile.FullName)"
+
+              $extractPath = "$(Pipeline.Workspace)\extracted"
+
+              if (Test-Path $extractPath) {
+                  Remove-Item $extractPath -Recurse -Force
+              }
+
+              New-Item -Path $extractPath -ItemType Directory -Force | Out-Null
+              Expand-Archive -Path $zipFile.FullName -DestinationPath $extractPath -Force
+
+              Write-Host "Package extracted to: $extractPath"
+            displayName: 'Extract Web Package'
+
+          - powershell: |
+              Import-Module WebAdministration
+
+              $siteName = "$(siteName)"
+              $targetPath = "$(appPhysicalPath)"
+              $sourcePath = "$(Pipeline.Workspace)\extracted"
+
+              Write-Host "Stopping website..."
+              if (Get-Website -Name $siteName -ErrorAction SilentlyContinue) {
+                  Stop-Website -Name $siteName
+              }
+
+              Write-Host "Cleaning target folder..."
+              if (Test-Path $targetPath) {
+                  Get-ChildItem -Path $targetPath -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+              }
+              else {
+                  New-Item -Path $targetPath -ItemType Directory -Force | Out-Null
+              }
+
+              Write-Host "Copying new files..."
+              Copy-Item "$sourcePath\*" -Destination $targetPath -Recurse -Force
+
+              Write-Host "Starting website..."
+              Start-Website -Name $siteName
+            displayName: 'Deploy Files to IIS Folder'
+
+          - powershell: |
+              Write-Host "Deployment completed."
+              Write-Host "App should be available at http://localhost/"
+            displayName: 'Print App URL'
 
 
