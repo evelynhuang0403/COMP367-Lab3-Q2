@@ -6,7 +6,7 @@ variables:
   artifactName: 'drop'
   webProject: 'MvcMovie/MvcMovie.csproj'
   packagePath: '$(Build.ArtifactStagingDirectory)'
-  siteName: 'Default Web Site'
+  siteName: 'MvcMovie'
   appPhysicalPath: 'C:\inetpub\wwwroot\MvcMovie'
 
 stages:
@@ -89,8 +89,13 @@ stages:
                   New-Item -Path $physicalPath -ItemType Directory -Force
               }
 
+              if (-not (Get-WebAppPoolState -Name $siteName -ErrorAction SilentlyContinue)) {
+                  New-WebAppPool -Name $siteName
+                  Write-Host "Created app pool: $siteName"
+              }
+
               if (-not (Get-Website -Name $siteName -ErrorAction SilentlyContinue)) {
-                  New-Website -Name $siteName -Port 80 -PhysicalPath $physicalPath -Force
+                  New-Website -Name $siteName -Port 80 -PhysicalPath $physicalPath -ApplicationPool $siteName -Force
                   Write-Host "Created IIS site: $siteName"
               }
               else {
@@ -126,9 +131,12 @@ stages:
               $targetPath = "$(appPhysicalPath)"
               $sourcePath = "$(Pipeline.Workspace)\extracted"
 
-              Write-Host "Stopping website..."
+              Write-Host "Stopping website and app pool..."
               if (Get-Website -Name $siteName -ErrorAction SilentlyContinue) {
                   Stop-Website -Name $siteName
+              }
+              if (Get-WebAppPoolState -Name $siteName -ErrorAction SilentlyContinue) {
+                  Stop-WebAppPool -Name $siteName
               }
 
               Write-Host "Cleaning target folder..."
@@ -140,9 +148,10 @@ stages:
               }
 
               Write-Host "Copying new files..."
-              Copy-Item "$sourcePath\*" -Destination $targetPath -Recurse -Force
+              Copy-Item "$sourcePath\MvcMovie\*" -Destination $targetPath -Recurse -Force
 
-              Write-Host "Starting website..."
+              Write-Host "Starting website and app pool..."
+              Start-WebAppPool -Name $siteName
               Start-Website -Name $siteName
             displayName: 'Deploy Files to IIS Folder'
 
