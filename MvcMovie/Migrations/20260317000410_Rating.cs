@@ -13,7 +13,7 @@ namespace MvcMovie.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "Rating",
                 table: "Movie",
-                type: "nvarchar(max)",
+                type: "TEXT",
                 nullable: true);
         }
 

@@ -10,8 +10,10 @@ namespace MvcMovie
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
+
+            var dbPath = Path.Combine(builder.Environment.ContentRootPath, "MvcMovie.db");
             builder.Services.AddDbContext<MvcMovieContext>(options =>
-                options.UseSqlServer(builder.Configuration.GetConnectionString("MvcMovieContext") ?? throw new InvalidOperationException("Connection string 'MvcMovieContext' not found.")));
+                options.UseSqlite($"Data Source={dbPath}"));
 
             // Add services to the container.
             builder.Services.AddControllersWithViews();
@@ -21,7 +23,9 @@ namespace MvcMovie
             using (var scope = app.Services.CreateScope())
             {
                 var services = scope.ServiceProvider;
+                var context = services.GetRequiredService<MvcMovieContext>();
 
+                context.Database.EnsureCreated();
                 SeedData.Initialize(services);
             }
 
@@ -29,7 +33,6 @@ namespace MvcMovie
             if (!app.Environment.IsDevelopment())
             {
                 app.UseExceptionHandler("/Home/Error");
-                // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
 
